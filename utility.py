@@ -1,5 +1,6 @@
 '''utility functions and classes
 '''
+import collections
 import json
 from typing import Dict, List
 import os
@@ -12,37 +13,39 @@ def parse_invocation_arguments(argv: List[str]) -> Dict[str, any]:
 
     Args:
     - argv[0]: name used to invoke program
-    - argv[1]: path to config file, which is a text file encoded with JSON
-    - remaining optional args: abc=value. This overrides the key "abc" in the config file
+    - argv[1:]: path to config file, which is a text file encoded with JSON or abc=value (an override)
 
     Returns:
-       A dictionary containing the parsed values and overrides.
+       A collection.ChainMap(overrides, first_config, second_config, ...)
+       containing the parsed config file values and overrides.
     '''
-    if len(argv) < 2:
-        return dict()
-    with open(argv[1], 'r') as f:
-        result = json.load(f)
-
-    if len(argv) > 2:
-        for arg in argv[2:]:
+    maps = []
+    overrides = {}
+    for arg in argv[1:]:
+        try:
+            with open(arg, 'r') as f:
+                maps.append(json.load(f))
+        except FileNotFoundError:
+            # process as an override
             key, value = arg.split('=')
             try:
-                result[key] = int(value)
+                overrides[key] = int(value)
                 continue
             except ValueError:
                 pass
             try:
-                result[key] = float(value)
+                overrides[key] = float(value)
                 continue
             except ValueError:
                 pass
             try:
-                result[key] = eval(value)
+                overrides[key] = eval(value)
                 continue
             except NameError:
                 pass
-            result[key] = value  # value must be a str
-
+            overrides[key] = value  # value must be a str
+    pdb.set_trace()
+    result = collections.ChainMap(overrides, *maps)
     return result
 
 
