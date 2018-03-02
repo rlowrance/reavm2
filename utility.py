@@ -90,6 +90,18 @@ def make_logger(module_name, config):
     return logger
 
 
+def log_config(module_name: str, config: Dict, logger) -> None:
+    'log configuration keys and values'
+    for k in sorted(config.keys()):
+        if not k.startswith('_'):
+            v = config[k]
+            if isinstance(v, list):
+                for i, item in enumerate(v):
+                    logger.info('config key %s[%d] value %s' % (k, i, item))
+            else:
+                logger.info('config key %s value %s' % (k, config[k]))
+
+
 class TestMakeLogger(unittest.TestCase):
     def test(self):
         pdb.set_trace()
