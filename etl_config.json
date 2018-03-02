@@ -1,0 +1,28 @@
+{
+    "in_deeds": [
+        "real-estate-los-angeles/input/corelogic-deeds-090402_07/CAC06037F1.zip",
+        "real-estate-los-angeles/input/corelogic-deeds-090402_07/CAC06037F2.zip",
+        "real-estate-los-angeles/input/corelogic-deeds-090402_07/CAC06037F3.zip",
+        "real-estate-los-angeles/input/corelogic-deeds-090402_07/CAC06037F4.zip",
+        "real-estate-los-angeles/input/corelogic-deeds-090402_09/CAC06037F5.zip",
+        "real-estate-los-angeles/input/corelogic-deeds-090402_09/CAC06037F6.zip",
+        "real-estate-los-angeles/input/corelogic-deeds-090402_09/CAC06037F7.zip",
+        "real-estate-los-angeles/input/corelogic-deeds-090402_09/CAC06037F8.zip"],
+    "in_taxrolls": [
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F1.zip",
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F2.zip",
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F3.zip",
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F4.zip",
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F5.zip",
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F6.zip",
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F7.zip",
+        "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F8.zip"],
+    "in_census": "real-estate-los-angeles/input/neighborhood-data/census.csv",
+    "in_geocoding": "real-estate-los-angeles/input/geocoding.tsv",
+    "out_db_name": "data.sqlite3",
+    "logging_filename": "log_etl.txt",
+    "logging_level": "DEBUG",
+    "logging_stderr": true}
+  
+
+                            
