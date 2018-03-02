@@ -1,6 +1,7 @@
 '''utility functions and classes
 '''
 import collections
+import datetime
 import json
 import logging
 from typing import Dict, List
@@ -8,6 +9,12 @@ import os
 import pdb
 import sys
 import unittest
+
+
+def as_date(s: str) -> datetime.date:
+    '''Convert string to a datetime'''
+    year, month, day = s.split('-')
+    return datetime.date(int(year), int(month), int(day))
 
 
 def parse_invocation_arguments(argv: List[str]) -> Dict[str, any]:
@@ -102,9 +109,16 @@ def log_config(module_name: str, config: Dict, logger) -> None:
                 logger.info('config key %s value %s' % (k, config[k]))
 
 
+class TestAsDate(unittest.TestCase):
+    def test(self):
+        d = as_date('1994-12-11')
+        self.assertEqual(d.year, 1994)
+        self.assertEqual(d.month, 12)
+        self.assertEqual(d.day, 11)
+
+
 class TestMakeLogger(unittest.TestCase):
     def test(self):
-        pdb.set_trace()
         config = {
             'loggin_stderr': False,
             'logging_stdout': True,
