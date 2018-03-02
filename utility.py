@@ -29,7 +29,11 @@ def parse_invocation_arguments(argv: List[str]) -> Dict[str, any]:
                 maps.append(json.load(f))
         except FileNotFoundError:
             # process as an override
-            key, value = arg.split('=')
+            splits = arg.split('=')
+            if len(splits) != 2:
+                print('invocation argument not filename nor key=value: %s' % arg)
+                sys.exit(1)
+            key, value = splits
             try:
                 overrides[key] = int(value)
                 continue
@@ -80,7 +84,7 @@ def make_logger(module_name, config):
         logger.addHandler(handler)
     if 'logging_filename' in config:
         path = os.path.join(config['dir_working'], config['logging_filename'])
-        handler = logger.FileHandler(path)
+        handler = logging.FileHandler(path)
         handler.setFormatter(formatter)
         logger.addHandler(handler)
     return logger
