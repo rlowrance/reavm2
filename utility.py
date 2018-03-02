@@ -2,9 +2,11 @@
 '''
 import collections
 import json
+import logging
 from typing import Dict, List
 import os
 import pdb
+import sys
 import unittest
 
 
@@ -44,9 +46,60 @@ def parse_invocation_arguments(argv: List[str]) -> Dict[str, any]:
             except NameError:
                 pass
             overrides[key] = value  # value must be a str
-    pdb.set_trace()
     result = collections.ChainMap(overrides, *maps)
     return result
+
+
+def make_logger(module_name, config):
+    '''Setup logging to print and write to files
+
+    CONFIG KEYS USED
+    - logging_filename: optional name of file in dir_working to write to
+    - logging_level:    one of DEBUG INFO WARNING ERROR CRITICAL
+    - logging_stderr:   optional; if True, write log messages to stderr
+    - logging_stdout:   optional: if True, write log messages to stdout
+    '''
+    logger = logging.getLogger(module_name)
+    level = config['logging_level'].upper()
+    logger.setLevel(
+        logging.DEBUG if level == 'DEBUG' else
+        logging.INFO if level == 'INFO' else
+        logging.WARNING if level == 'WARNING' else
+        logging.ERROR if level == 'ERROR' else
+        logging.CRITICAL if level == 'CRITICAL' else
+        None
+        )
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    if config.get('logging_stderr', False):
+        handler = logging.StreamHandler(stream=sys.stderr)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    if config.get('logging_stdout', False):
+        handler = logging.StreamHandler(stream=sys.stdout)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    if 'logging_filename' in config:
+        path = os.path.join(config['dir_working'], config['logging_filename'])
+        handler = logger.FileHandler(path)
+        handler.setFormatter(formatter)
+        logger.addHandler(handler)
+    return logger
+
+
+class TestMakeLogger(unittest.TestCase):
+    def test(self):
+        pdb.set_trace()
+        config = {
+            'loggin_stderr': False,
+            'logging_stdout': True,
+            'logging_level': 'info',
+            }
+        logger = make_logger('utility.py', config)
+        logger.debug('debug message')
+        logger.info('info message')
+        logger.warning('warning message')
+        logger.error('error message')
+        logger.critical('critical message')
 
 
 class TestParseInvocationArguments(unittest.TestCase):
