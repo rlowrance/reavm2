@@ -99,14 +99,16 @@ def make_logger(module_name, config):
 
 def log_config(module_name: str, config: Dict, logger) -> None:
     'log configuration keys and values'
+    message_template = 'config\n key %s\n value %s'
     for k in sorted(config.keys()):
         if not k.startswith('_'):
             v = config[k]
             if isinstance(v, list):
                 for i, item in enumerate(v):
-                    logger.info('config key %s[%d] value %s' % (k, i, item))
+                    key = '%s[%d]' % (k, i)
+                    logger.info(message_template % (key, item))
             else:
-                logger.info('config key %s value %s' % (k, config[k]))
+                logger.info(message_template % (k, config[k]))
 
 
 class TestAsDate(unittest.TestCase):
