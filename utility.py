@@ -12,9 +12,14 @@ import unittest
 
 
 def as_date(s: str) -> datetime.date:
-    '''Convert string to a datetime'''
-    year, month, day = s.split('-')
-    return datetime.date(int(year), int(month), int(day))
+    '''Convert string to a datetime or raise an error'''
+    if '-' in s:
+        # assume format is YYYY-MM-DD
+        year, month, day = s.split('-')
+        return datetime.date(int(year), int(month), int(day))
+    else:
+        # assume format is YYYYMMDD
+        return datetime.date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
 
 
 def parse_invocation_arguments(argv: List[str]) -> Dict[str, any]:
@@ -112,11 +117,24 @@ def log_config(module_name: str, config: Dict, logger) -> None:
 
 
 class TestAsDate(unittest.TestCase):
-    def test(self):
+    def test_1(self):
         d = as_date('1994-12-11')
         self.assertEqual(d.year, 1994)
         self.assertEqual(d.month, 12)
         self.assertEqual(d.day, 11)
+
+    def test_2(self):
+        d = as_date('19941211')
+        self.assertEqual(d.year, 1994)
+        self.assertEqual(d.month, 12)
+        self.assertEqual(d.day, 11)
+
+    def test_3(self):
+        try:
+            as_date('')
+            self.fail('should have raised an error')
+        except Exception:
+            self.assertTrue(True)
 
 
 class TestMakeLogger(unittest.TestCase):
