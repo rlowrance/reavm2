@@ -22,6 +22,22 @@ def as_date(s: str) -> datetime.date:
         return datetime.date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
 
 
+def best_apn(formatted: str, unformatted: str) -> int:
+    '''return as int, the best of the APN values, or raise ValueError if neither is usable.'''
+    pdb.set_trace()
+    try:
+        value = int(unformatted)
+        return value
+    except ValueError:
+        pass
+    pdb.set_trace()
+    try:
+        value = int(formatted.replace('-', ''))
+        return value
+    except ValueError:
+        raise ValueError
+
+
 def parse_invocation_arguments(argv: List[str]) -> Dict[str, any]:
     '''Parse invocation aguments
 
