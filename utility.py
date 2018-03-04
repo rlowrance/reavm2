@@ -17,7 +17,7 @@ class Error(Exception):
 
 
 class InputError(Error):
-    '''Error in input'''
+    '''Error in input file'''
     def __init__(self, reason, detail):
         self.reason = reason
         self.detail = detail
@@ -42,24 +42,27 @@ def as_date(s: str) -> datetime.date:
 
 def best_apn(formatted: str, unformatted: str) -> int:
     '''return as int, the best of the APN values, or raise ValueError if neither is usable.'''
+    # attempt to use the unformatted value
     try:
-        value = int(unformatted)
-        return value
+        # some unformatted values are decorated with space, _, or - characters
+        return int(unformatted.replace(' ', '').replace('_', '').replace('-', ''))
     except ValueError:
         pass
+
+    # attempt to use the formatted value
     try:
-        # some unformatted APNs have imbedded spaces
-        value = int(unformatted.replace(' ', ''))
-        return value
-    except ValueError:
-        pass
-    try:
-        pdb.set_trace()
         value = int(formatted.replace('-', ''))
         return value
     except ValueError:
-        pdb.set_trace()
+        pass
+
+    # check a case that occured at least once in the deeds file
+    if formatted == '' and unformatted == '':
         raise ValueError
+
+    # code this way so that during development, I could find other strange encodings
+    pdb.set_trace()
+    raise ValueError
 
 
 def parse_invocation_arguments(argv: List[str]) -> Dict[str, any]:
@@ -125,19 +128,20 @@ def make_logger(module_name, config):
         logging.CRITICAL if level == 'CRITICAL' else
         None
         )
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter_long = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    formatter_short = logging.Formatter('%(levelname)s %(message)s')
     if config.get('logging_stderr', False):
         handler = logging.StreamHandler(stream=sys.stderr)
-        handler.setFormatter(formatter)
+        handler.setFormatter(formatter_short)
         logger.addHandler(handler)
     if config.get('logging_stdout', False):
         handler = logging.StreamHandler(stream=sys.stdout)
-        handler.setFormatter(formatter)
+        handler.setFormatter(formatter_short)
         logger.addHandler(handler)
     if 'logging_filename' in config:
         path = os.path.join(config['dir_working'], config['logging_filename'])
         handler = logging.FileHandler(path)
-        handler.setFormatter(formatter)
+        handler.setFormatter(formatter_long)
         logger.addHandler(handler)
     return logger
 
