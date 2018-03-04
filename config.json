@@ -1,6 +1,7 @@
 {
     "_": "common configuration values",
-    "dir_data": "~/Dropbox/data",
+    "dir_data": "/home/roy/Dropbox/data",
+    "dir_source": "/home/roy/Dropbox/ads/research/shasha/re-avm/reavm2",
     "dir_working": "/home/roy/Dropbox/data/shasha/re-avm2/working"}
   
 
