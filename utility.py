@@ -11,30 +11,54 @@ import sys
 import unittest
 
 
+class Error(Exception):
+    '''Base class for application-specific errors'''
+    pass
+
+
+class InputError(Error):
+    '''Error in input'''
+    def __init__(self, reason, detail):
+        self.reason = reason
+        self.detail = detail
+
+
 def as_date(s: str) -> datetime.date:
-    '''Convert string to a datetime or raise an error'''
+    '''Convert string to a datetime or raise an error
+
+    Convert day 0 to day 1
+
+    The call to datetime.date() will raise an error, if the date is not in the calendar
+    '''
     if '-' in s:
         # assume format is YYYY-MM-DD
         year, month, day = s.split('-')
-        return datetime.date(int(year), int(month), int(day))
+        return datetime.date(int(year), int(month), int(day) if day != '00' else 1)
     else:
         # assume format is YYYYMMDD
-        return datetime.date(int(s[0:4]), int(s[4:6]), int(s[6:8]))
+        day = int(s[6:8])
+        return datetime.date(int(s[0:4]), int(s[4:6]), day if day > 0 else 1)
 
 
 def best_apn(formatted: str, unformatted: str) -> int:
     '''return as int, the best of the APN values, or raise ValueError if neither is usable.'''
-    pdb.set_trace()
     try:
         value = int(unformatted)
         return value
     except ValueError:
         pass
-    pdb.set_trace()
     try:
+        # some unformatted APNs have imbedded spaces
+        value = int(unformatted.replace(' ', ''))
+        return value
+    except ValueError:
+        pass
+    try:
+        pdb.set_trace()
         value = int(formatted.replace('-', ''))
         return value
     except ValueError:
+        pdb.set_trace()
         raise ValueError
 
 
