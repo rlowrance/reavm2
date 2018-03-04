@@ -1,4 +1,5 @@
 {
+    "date_census_became_known": "2003-01-01",
     "in_deeds": [
         "real-estate-los-angeles/input/corelogic-deeds-090402_07/CAC06037F1.zip",
         "real-estate-los-angeles/input/corelogic-deeds-090402_07/CAC06037F2.zip",
@@ -19,7 +20,8 @@
         "real-estate-los-angeles/input/corelogic-taxrolls_090402_05/CAC06037F8.zip"],
     "in_census": "real-estate-los-angeles/input/neighborhood-data/census.csv",
     "in_geocoding": "real-estate-los-angeles/input/geocoding.tsv",
-    "out_db_name": "data.sqlite3",
+    "max_sale_amount": 85000000.0,
+    "out_db": "data.sqlite3",
     "logging_filename": "log_etl.txt",
     "logging_level": "DEBUG",
     "logging_stderr": true}
