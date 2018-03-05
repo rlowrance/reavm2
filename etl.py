@@ -39,16 +39,21 @@ import utility as u
 
 def lookup_code(conn, table_name, code_table, description):
     '''Return code as str or raise u.NotFoundError'''
-    pdb.set_trace()
-    stmt = 'SELECT value FROM %s where code_type == %s AND description == %s' % (
+    stmt = 'SELECT value FROM %s where code_table == "%s" AND description == "%s"' % (
         table_name,
         code_table,
         description,
         )
+    n_rows = 0
     for row in conn.execute(stmt):
-        if len(row) == 1:
-            return row['value']
+        value = row['value']
+        n_rows += 1
+    if n_rows == 0:
         raise u.NotFoundError((table_name, code_table, description))
+    elif n_rows == 1:
+        return value
+    else:
+        raise u.NotUnique((table_name, code_table, description))
 
 
 def create_table_codes(conn, config, logger, table_name):
@@ -76,7 +81,7 @@ def create_table_codes(conn, config, logger, table_name):
     ( code_table    text NOT NULL
     , value         text NOT NULL
     , description   text NOT NULL
-    , PRIMARY KEY (code_table, value)
+    , PRIMARY KEY (code_table, value, description)
     )
     ''' % table_name
     conn.execute(stmt_create)
@@ -95,13 +100,28 @@ def create_table_codes(conn, config, logger, table_name):
                 for existing in conn.execute('SELECT * from %s' % table_name):
                     print(tuple(existing))
 
-            stmt = 'INSERT INTO %s VALUES("%s", "%s", "%s")' % (
-                table_name,
-                row['CODE TABLE'],
-                row['VALUE'],
-                row['DESCRIPTION'],
+            # Some rows are duplicated in the taxrolls code table
+            # This code handles that by skipping code-description values already in the code table
+            try:
+                stmt = 'INSERT INTO %s VALUES("%s", "%s", "%s")' % (
+                    table_name,
+                    row['CODE TABLE'],
+                    row['VALUE'],
+                    row['DESCRIPTION'],
                 )
-            conn.execute(stmt)
+                conn.execute(stmt)
+            except sqlite3.IntegrityError as err:
+                if str(err).startswith('UNIQUE constraint failed:'):
+                    existing_code = lookup_code(conn, table_name, row['CODE TABLE'], row['DESCRIPTION'])
+                    if existing_code == row['VALUE']:
+                        # there is a duplicate record in the csv file
+                        pass
+                    else:
+                        print('fix this problem')
+                        pdb.set_trace()
+                else:
+                    # unexpected error
+                    raise err
     return
 
 
@@ -120,12 +140,19 @@ def create_table_deeds(conn, config, logger):
     sale_amounts = collections.defaultdict(list)
     date_census_became_known = u.as_date(config['date_census_became_known'])
     max_sale_amount = float(config['max_sale_amount'])
+    pdb.set_trace()
+    code_single_family_residence = lookup_code(conn, 'code_deeds', 'PROPN', 'Single Family Residence / Townhouse')
+    code_grant_deed = lookup_code(conn, 'code_deeds', 'DEEDC', 'GRANT DEED')
+    code_arms_length = lookup_code(conn, 'code_deeds', 'PRICATCODE', 'ARMS LENGTH TRANSACTION')
+    code_resale = lookup_code(conn, 'code_deeds', 'TRNTP', 'RESALE')
+    code_new_construction = lookup_code(conn, 'code_deeds', 'TRNTP', 'SUBDIVISION/NEW CONSTRUCTION')
 
     def make_values(row: dict) -> typing.List:
         'return list of values or raise ValueError if the row is not valid'
-        if False:
+        if True:
             pprint.pprint(row)
         # make sure deed is one that we want
+        # TODO: check for SFR
         if not row['DOCUMENT TYPE CODE'] == 'G':
             raise u.InputError('deed not a grant deed', row['DOCUMENT TYPE CODE'])
 
@@ -516,7 +543,7 @@ def main(argv):
     if True:
         create_table_codes_deeds(conn, config, logger)
         create_table_codes_taxrolls(conn, config, logger)
-    if False:
+    if True:
         create_table_deeds(conn, config, logger)
     if True:
         create_table_parcels(conn, config, logger)
