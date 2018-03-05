@@ -37,6 +37,84 @@ import typing
 import utility as u
 
 
+def lookup_code(conn, table_name, code_table, description):
+    '''Return code as str or raise u.NotFoundError'''
+    pdb.set_trace()
+    stmt = 'SELECT value FROM %s where code_type == %s AND description == %s' % (
+        table_name,
+        code_table,
+        description,
+        )
+    for row in conn.execute(stmt):
+        if len(row) == 1:
+            return row['value']
+        raise u.NotFoundError((table_name, code_table, description))
+
+
+def create_table_codes(conn, config, logger, table_name):
+    '''Create table codes_deeds from info in config['in_codes_deeds']'''
+    def skip_code(table_name, row):
+        '''Return True iff the code should be skipped
+
+        These codes are incorrect for this application
+        '''
+        if table_name == 'codes_deeds':
+            if row['CODE TABLE'] == 'DEEDC':
+                if row['DESCRIPTION'] == 'LIS PENDENS - NON CALIFORNIA':
+                    # all of our deeds are for california
+                    return True
+        elif table_name == 'codes_taxrolls':
+            pass
+        else:
+            raise ValueError('bad table_name: %s' % table_name)
+        return False
+
+    stmt_drop = 'DROP TABLE IF EXISTS %s' % table_name
+    conn.execute(stmt_drop)
+
+    stmt_create = '''CREATE TABLE %s
+    ( code_table    text NOT NULL
+    , value         text NOT NULL
+    , description   text NOT NULL
+    , PRIMARY KEY (code_table, value)
+    )
+    ''' % table_name
+    conn.execute(stmt_create)
+
+    path = os.path.join(config['dir_data'], config['in_' + table_name])
+    with open(path, encoding='latin-1') as csvfile:
+        reader = csv.DictReader(csvfile, delimiter=',')
+        for row_index, row in enumerate(reader):
+            pprint.pprint(row)
+            if skip_code(table_name, row):
+                logger.warning('skipping code: %s %s' % (table_name, str(row)))
+                continue
+
+            if False:
+                print('existing values')
+                for existing in conn.execute('SELECT * from %s' % table_name):
+                    print(tuple(existing))
+
+            stmt = 'INSERT INTO %s VALUES("%s", "%s", "%s")' % (
+                table_name,
+                row['CODE TABLE'],
+                row['VALUE'],
+                row['DESCRIPTION'],
+                )
+            conn.execute(stmt)
+    return
+
+
+def create_table_codes_deeds(conn, config, logger):
+    '''Create table codes_deeds'''
+    return create_table_codes(conn, config, logger, 'codes_deeds')
+
+
+def create_table_codes_taxrolls(conn, config, logger):
+    '''Create table codes_deeds'''
+    return create_table_codes(conn, config, logger, 'codes_taxrolls')
+
+
 def create_table_deeds(conn, config, logger):
     '''Create table deeds from data in deeds zip files'''
     sale_amounts = collections.defaultdict(list)
@@ -341,9 +419,9 @@ def create_table_parcels(conn, config, logger):
         , number_of_buildings          integer
         , total_rooms                  integer
         , units_number                 integer
-        , property_indicator_code      string
+        , property_indicator_code      text
         , land_square_footage          real
-        , universal_land_use_code      string
+        , universal_land_use_code      text
         , living_square_feet           real
         , year_built                   integer
         , PRIMARY KEY (apn)
@@ -435,8 +513,12 @@ def main(argv):
         )
     conn.row_factory = sqlite3.Row
 
-    create_table_deeds(conn, config, logger)
+    if True:
+        create_table_codes_deeds(conn, config, logger)
+        create_table_codes_taxrolls(conn, config, logger)
     if False:
+        create_table_deeds(conn, config, logger)
+    if True:
         create_table_parcels(conn, config, logger)
         create_table_census_tract(conn, config, logger)
         create_table_census_tract_derived(conn, config, logger)
