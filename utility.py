@@ -23,6 +23,18 @@ class InputError(Error):
         self.detail = detail
 
 
+class NotFoundError(Error):
+    '''key was not found'''
+    def __init__(self, value):
+        self.value = value
+
+
+class NotUnique(Error):
+    '''key leads to more than one value'''
+    def __init__(self, value):
+        self.value = value
+
+
 def as_date(s: str) -> datetime.date:
     '''Convert string to a datetime or raise an error
 
