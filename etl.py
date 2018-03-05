@@ -56,7 +56,7 @@ def lookup_code(conn, table_name, code_table, description):
         raise u.NotUnique((table_name, code_table, description))
 
 
-def create_table_codes(conn, config, logger, table_name):
+def read_codes(conn, config, logger, table_name):
     '''Create table codes_deeds from info in config['in_codes_deeds']'''
     def skip_code(table_name, row):
         '''Return True iff the code should be skipped
@@ -125,56 +125,63 @@ def create_table_codes(conn, config, logger, table_name):
     return
 
 
-def create_table_codes_deeds(conn, config, logger):
+def read_codes_deeds(conn, config, logger):
     '''Create table codes_deeds'''
-    return create_table_codes(conn, config, logger, 'codes_deeds')
+    return read_codes(conn, config, logger, 'codes_deeds')
 
 
-def create_table_codes_taxrolls(conn, config, logger):
+def read_codes_taxrolls(conn, config, logger):
     '''Create table codes_deeds'''
-    return create_table_codes(conn, config, logger, 'codes_taxrolls')
+    return read_codes(conn, config, logger, 'codes_taxrolls')
 
 
-def create_table_deeds(conn, config, logger):
+def read_deeds(conn, config, logger):
     '''Create table deeds from data in deeds zip files'''
     sale_amounts = collections.defaultdict(list)
     date_census_became_known = u.as_date(config['date_census_became_known'])
     max_sale_amount = float(config['max_sale_amount'])
-    pdb.set_trace()
-    code_single_family_residence = lookup_code(conn, 'code_deeds', 'PROPN', 'Single Family Residence / Townhouse')
-    code_grant_deed = lookup_code(conn, 'code_deeds', 'DEEDC', 'GRANT DEED')
-    code_arms_length = lookup_code(conn, 'code_deeds', 'PRICATCODE', 'ARMS LENGTH TRANSACTION')
-    code_resale = lookup_code(conn, 'code_deeds', 'TRNTP', 'RESALE')
-    code_new_construction = lookup_code(conn, 'code_deeds', 'TRNTP', 'SUBDIVISION/NEW CONSTRUCTION')
+
+    code_single_family_residence = lookup_code(conn, 'codes_deeds', 'PROPN', 'Single Family Residence / Townhouse')
+    code_grant_deed = lookup_code(conn, 'codes_deeds', 'DEEDC', 'GRANT DEED')
+    code_arms_length = lookup_code(conn, 'codes_deeds', 'PRICATCODE', 'ARMS LENGTH TRANSACTION')
+    code_resale = lookup_code(conn, 'codes_deeds', 'TRNTP', 'RESALE')
+    code_new_construction = lookup_code(conn, 'codes_deeds', 'TRNTP', 'SUBDIVISION/NEW CONSTRUCTION')
+    # code_sale_confirmed = lookup_code(conn, 'codes_deeds', 'SCODE', 'CONFIRMED')
+    # code_sale_verified = lookup_code(conn, 'codes_deeds', 'SCODE', 'VERIFIED')
+    code_sale_full_price = lookup_code(conn, 'codes_deeds', 'SCODE', 'SALE PRICE (FULL)')
 
     def make_values(row: dict) -> typing.List:
         'return list of values or raise ValueError if the row is not valid'
-        if True:
+        if False:
             pprint.pprint(row)
         # make sure deed is one that we want
-        # TODO: check for SFR
-        if not row['DOCUMENT TYPE CODE'] == 'G':
+        if not row['PROPERTY INDICATOR CODE'] == code_single_family_residence:
+            raise u.InputError('not a single family residence', row['PROPERTY INDICATOR CODE'])
+
+        if not row['DOCUMENT TYPE CODE'] == code_grant_deed:
             raise u.InputError('deed not a grant deed', row['DOCUMENT TYPE CODE'])
 
-        if not row['PRI CAT CODE'] == 'A':
+        if not row['PRI CAT CODE'] == code_arms_length:
             raise u.InputError('deed not an arms-length transaction', row['PRI CAT CODE'])
 
+        # Assume that if the MULTI APLN FLAG CODE is missing, then one APN was sold
         if (not row['MULTI APN FLAG CODE'] == '') or int(row['MULTI APN COUNT']) > 1:
             raise u.InputError('deed has multipe APNs', (row['MULTI APN FLAG CODE'], row['MULTI APN COUNT']))
 
-        if row['TRANSACTION TYPE CODE'] == '1':
-            pass  # resale
-        else:
-            if row['TRANSACTION TYPE CODE'] == '3':
-                pass  # new construction
-            else:
-                raise u.InputError('deed not resale nor new construction', row['TRANSACTION TYPE CODE'])
+        # these codes are truncated in the file (leading zeros are omitted)
+        try:
+            ttc = int(row['TRANSACTION TYPE CODE'])
+        except ValueError:
+            raise u.InputError('TRANSACTION TYPE CODE not an int', row['TRANSACTION TYPE CODE'])
 
-        if row['SALE CODE'] == 'C':
-            pass  # confirmed (assumed to be full price)
-        elif row['SALE CODE'] == 'V':
-            pass  # verified (assume to be be full price)
-        elif row['SALE CODE'] == 'F':
+        if ttc in (int(code_resale), int(code_new_construction)):
+            pass
+        else:
+            raise u.InputError('deed not resale nor new construction', row['TRANSACTION TYPE CODE'])
+
+        # Version 1 accepted sale_code_confirmed and sale_code_verified as well
+        # However, we don't know that the confirmations and verifications were for a transaction with full price
+        if row['SALE CODE'] == code_sale_full_price:
             pass  # full price
         else:
             raise u.InputError('deed not full price', row['SALE CODE'])
@@ -260,9 +267,6 @@ def create_table_deeds(conn, config, logger):
             for row_index, row in enumerate(reader):
                 if debug:
                     print(row_index)
-                if False and row_index == 255716:
-                    print('found row_index', row_index)
-                    pdb.set_trace()
                 try:
                     values = make_values(row)
                     conn.execute('INSERT INTO deeds VALUES (?, ?, ?)', values)
@@ -301,8 +305,8 @@ def create_table_deeds(conn, config, logger):
     return
 
 
-def create_table_parcels(conn, config, logger):
-    '''Create table parcels from data in deeds zip files'''
+def read_taxrolls(conn, config, logger):
+    '''Create table parcels from data in taxroll zip files'''
     pdb.set_trace()
     # TODO: revist these data structures
     sale_amounts = collections.defaultdict(list)
@@ -541,14 +545,13 @@ def main(argv):
     conn.row_factory = sqlite3.Row
 
     if True:
-        create_table_codes_deeds(conn, config, logger)
-        create_table_codes_taxrolls(conn, config, logger)
+        read_codes_deeds(conn, config, logger)
+        read_codes_taxrolls(conn, config, logger)
     if True:
-        create_table_deeds(conn, config, logger)
-    if True:
-        create_table_parcels(conn, config, logger)
-        create_table_census_tract(conn, config, logger)
-        create_table_census_tract_derived(conn, config, logger)
+        read_deeds(conn, config, logger)
+    if False:
+        read_taxrolls(conn, config, logger)
+        read_census(conn, config, logger)
 
         create_transactions(conn)
 
