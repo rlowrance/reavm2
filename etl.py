@@ -26,6 +26,7 @@ file in tab-separated format.
 import collections
 import csv
 import datetime
+import numpy as np
 import os
 import pdb
 import pprint
@@ -272,7 +273,7 @@ def read_deeds(conn, config, logger):
                     conn.execute('INSERT INTO deeds VALUES (?, ?, ?)', values)
                     counter['saved'] += 1
                 except u.InputError as err:
-                    logger.warning('deed file %s record %d InputError %s' % (path_zip, row_index + 1, err))
+                    # logger.warning('deed file %s record %d InputError %s' % (path_zip, row_index + 1, err))
                     counter['skipped'] += 1
                     error_reasons[err.reason] += 1
                 if debug:
@@ -305,164 +306,386 @@ def read_deeds(conn, config, logger):
     return
 
 
-def read_taxrolls(conn, config, logger):
-    '''Create table parcels from data in taxroll zip files'''
-    pdb.set_trace()
-    # TODO: revist these data structures
-    sale_amounts = collections.defaultdict(list)
-    date_census_became_known = u.as_date(config['date_census_became_known'])
-    max_sale_amount = float(config['max_sale_amount'])
+class Neighborhood:
+    'singleton class, to group together computation and data around neighborhood features'
+    def __init__(self, conn, logger, table_name):
+        def code_lusei(description):
+            return int(lookup_code(self.conn, self.table_name, 'LUSEI', description))
 
-    def make_values(row: dict) -> (bool, typing.List):
-        'return list of values or raise ValueError if the row is not valid'
-        if True:
+        def code_propn(description):
+            return int(lookup_code(self.conn, self.table_name, 'PROPN', description))
+
+        self.conn = conn
+        self.logger = logger
+        self.table_name = table_name
+
+        self.propn_skip = set([0])
+        self.lusei_skip = set([999])
+
+        # table is ordered by the values of PROPN in the taxroll_codes table
+        # Group the descriptions into propn kinds
+        propn_kind_description = {
+            'Single Family Residence / Townhouse': 'residential',
+            'Condominium (residential)': 'residential',
+            'Commercial': 'commercial',
+            'Duplex, Triplex, Quadplex': 'residential',
+            'Apartment': 'residential',
+            'Hotel, Motel': 'commercial',
+            'Commercial (condominium)': 'commercial',
+            'Retail': 'commercial',
+            'Service (general public)': 'Service (general public)',
+            'Office Building': 'commercial',
+            'Warehouse': 'commercial',
+            'Financial Institution': 'commercial',
+            'Hospital (medical complex, clinic)': 'other',
+            'Parking': 'commercial',
+            'Amusement-Recreation': 'Amusement-Recreation',
+            'Industrial': 'industrial',
+            'Industrial Light': 'industrial',
+            'Industrial Heavy': 'industrial',
+            'Transport': 'other',
+            'Utilities': 'other',
+            'Agricultural': 'other',
+            'Vacant': 'other',
+            'Exempt': 'Exempt',
+            }
+
+        # convert the descriptions to the codes used in the taxroll records
+        self.propn_kinds = {}
+        for k, v in propn_kind_description.items():
+            self.propn_kinds[code_propn(k)] = v
+
+        lusei_kind_description = {
+            'SCHOOL': 'school',
+            'NURSERY SCHOOL': 'school',
+            'HIGH SCHOOL': 'school',
+            'PRIVATE SCHOOL': 'school',
+            'VOCATIONAL/TRADE SCHOOL': 'school',
+            'SECONDARY EDUCATIONAL SCHOOL': 'school',
+            'PUBLIC SCHOOL': 'school',
+            'PARK': 'park',
+            }
+
+        self.lusei_kinds = {}
+        for k, v in lusei_kind_description.items():
+            self.lusei_kinds[code_lusei(k)] = v
+
+        self.parcel_count = collections.defaultdict(collections.Counter)
+        self.parcel_land_square_footage = collections.defaultdict(collections.Counter)
+
+    def accumulate(self, row) -> bool:
+        '''Accumulate lot size of the parcel or raise u.InputError'''
+        '''Return True iff neighborhood features were set'''
+
+        def count(census_tract, kind, land_square_footage):
+            self.parcel_count[census_tract][kind] += 1
+            self.parcel_land_square_footage[census_tract][kind] += land_square_footage
+
+        census_tract = row['CENSUS TRACT']
+        propn_code = int(row['PROPERTY INDICATOR CODE'])
+        lusei_code = int(row['UNIVERSAL LAND USE CODE'])
+        land_square_footage_str = row['LAND SQUARE FOOTAGE']
+
+        if census_tract not in self.parcel_count:
+            self.parcel_count[census_tract] = {
+                'residential': 0,  # count of parcels that are residential
+                'commercial': 0,   # count of parcels that are commercial
+                'industrial': 0,   # ...
+                'other': 0,
+                'total': 0,
+                'school': 0,
+                'park': 0,
+                }
+
+        if census_tract == '':
+            raise u.InputError('missing census_tract', census_tract)
+        if propn_code in self.propn_skip:
+            raise u.InputError('PROPN code is to be skipped', propn_code)
+        if lusei_code in self.lusei_skip:
+            raise u.InputError('LUSEI code is to be skipped', lusei_code)
+        if census_tract == '' or propn_code in self.propn_skip or lusei_code in self.lusei_skip:
+            return False
+        try:
+            land_square_footage = int(land_square_footage_str)
+        except ValueError:
+            pdb.set_trace()
+            raise u.InputError('LAND SQUARE FOOTAGE not an int', land_square_footage_str)
+
+        propn_kind = self.propn_kinds[propn_code]
+        lusei_kind = self.lusei_kinds.get(lusei_code, 'not special')
+        if propn_kind == 'residential':
+            count(census_tract, 'residential', land_square_footage)
+        elif propn_kind == 'commercial':
+            count(census_tract, 'commercial', land_square_footage)
+        elif propn_kind == 'Service (general public)':
+            if lusei_kind == 'school':
+                count(census_tract, 'school', land_square_footage)
+            else:
+                count(census_tract, 'other', land_square_footage)
+        elif propn_kind == 'industrial':
+            count(census_tract, 'industrial', land_square_footage)
+        elif propn_kind == 'Amusement-Recreation':
+            if lusei_kind == 'park':
+                count(census_tract, 'park', land_square_footage)
+            else:
+                count(census_tract, 'other', land_square_footage)
+        elif propn_kind == 'Exempt':
+            if lusei_kind == 'school':
+                count(census_tract, 'school', land_square_footage)
+            else:
+                count(census_tract, 'other', land_square_footage)
+        elif propn_kind == 'other':
+            count(census_tract, 'other', land_square_footage)
+        else:
+            print('cannot happen', propn_kind, lusei_kind)
+            pdb.set_trace()
+
+    def log_summary(self):
+        self.logger.info('neighborhood summary')
+        parcel_count = self.parcel_count
+        parcel_land_square_footage = self.parcel_land_square_footage
+        self.logger.info('found %d census tracts' % len(parcel_count))
+        for census_tract, census_tract_counts in parcel_count.items():
+            # determine totals across kinds
+            total_count = 0
+            for kind, count in census_tract_counts.items():
+                total_count += count
+            total_land_square_footage = 0
+            for kind, land_square_footage in parcel_land_square_footage[census_tract].items():
+                total_land_square_footage += land_square_footage
+
+            # print counts and fractions by kind
+            line_counts = 'census_tract %s counts: ' % census_tract
+            for kind, count in census_tract_counts.items():
+                if count > 0:
+                    line_counts += '%s %d ' % (kind, count)
+            self.logger.info(line_counts)
+
+            line_land = 'census_tract %s land area: ' % census_tract
+            for kind, land_square_footage in parcel_land_square_footage[census_tract].items():
+                if land_square_footage > 0:
+                    line_land += '%s %4.2f ' % (kind, land_square_footage / total_land_square_footage)
+            self.logger.info(line_land)
+            self.logger.info('')
+
+    def create_table(self):
+        '''insert table into the data base'''
+        # create the table
+        drop_stmt = '''DROP TABLE IF EXISTS neighborhoods'''
+        self.conn.execute(drop_stmt)
+
+        create_stmt = '''CREATE TABLE neighborhoods
+        ( census_tract                             text    NOT NULL
+        , fraction_land_square_footage_residential real    NOT NULL
+        , fraction_land_square_footage_commercial  real    NOT NULL
+        , fraction_land_square_footage_industrial  real    NOT NULL
+        , fraction_land_square_footage_schools     real    NOT NULL
+        , fraction_land_square_footage_parks       real    NOT NULL
+        , fraction_land_square_footage_other       real    NOT NULL
+        , PRIMARY KEY (census_tract)
+        )
+        '''
+        self.conn.execute(create_stmt)
+
+        # insert each row
+        counter = collections.Counter()
+        for census_tract, fractions_land_square_footage in self.parcel_land_square_footage.items():
+            total = 0.0
+            for k, v in fractions_land_square_footage.items():
+                total += v
+            if total == 0.0:
+                # skip census tracts with no land
+                print(census_tract, fractions_land_square_footage)
+                counter['skipped no land'] += 1
+                continue
+            self.conn.execute(
+                'INSERT INTO neighborhoods VALUES (?, ?, ?, ?, ?, ?, ?)',
+                ((census_tract,
+                  fractions_land_square_footage.get('residential', 0.0) / total,
+                  fractions_land_square_footage.get('commercial', 0.0) / total,
+                  fractions_land_square_footage.get('industrial', 0.0) / total,
+                  fractions_land_square_footage.get('schools', 0.0) / total,
+                  fractions_land_square_footage.get('parks', 0.0) / total,
+                  fractions_land_square_footage.get('other', 0.0) / total,
+                  )))
+            counter['inserted'] += 1
+        for k, v in counter.items():
+            self.logger.info('neighborhoods %s: %d' % (k, v))
+
+
+class Parcel:
+    def __init__(self, conn, logger):
+        self.conn = conn
+        self.logger = logger
+
+        self.propn_code_single_family_residential = lookup_code(
+            conn,
+            'codes_taxrolls',
+            'PROPN',
+            'Single Family Residence / Townhouse',
+        )
+
+        self.features = {}
+        self.accumulated = 0
+
+    def accumulate(self, row):
+        'accumulate features of the parcel into self.features'''
+        debug = False
+
+        def extract_nonnegative_float(field_name):
+            try:
+                value_str = row[field_name]
+                value = float(value_str)
+                assert value >= 0.0
+                return value
+            except Exception:
+                raise u.InputError('invalid %s' % field_name, value_str)
+
+        def extract_positive_float(field_name):
+            try:
+                value_str = row[field_name]
+                value = float(value_str)
+                assert value > 0.0
+                return value
+            except Exception:
+                raise u.InputError('invalid %s' % field_name, value_str)
+
+        if debug:
             pprint.pprint(row)
 
-        pdb.set_trace()
         try:
-            apn = u.best_apn(row['APN FORMATTED'], row['APN UNFORMATTED'])
-        except Exception:
-            raise u.InputError('invalid APN', (row['APN FORMATTED'], row['APN UNFORMATTED']))
-
-        try:
-            value = row['PROPERTY INDICATOR CODE']
-            property_indicator_code = int(value)
-        except Exception:
-            raise u.InputError('property_indicator_code not an int', value)
-
-        try:
-            value = row['CENSUS TRACT']
-            census_tract = int(value)
-        except Exception:
-            raise u.InputError('census_trace is not an int', value)
-
-        try:
-            value = row['PROPERTY ZIPCODE']
-            property_zipcode_9 = int(value)
-        except Exception:
-            raise u.InputError('property_zipcode_9 not an int', value)
-
-        try:
-            value = row['PROPERTY ZIPCODE'][0:5]
-            property_zipcode_5 = int(value)
-        except Exception:
-            raise u.InputError('property_zipcode_5 not an int', value)
-
-        try:
-            value = row['PROPERTY INDICATOR CODE']
-            property_indicator_code = int(value)
-        except Exception:
-            raise u.InputError('property_indicator_code is not an int', value)
-
-        if property_indicator_code != 10:
-            # not a single family residence
-            return (False, (apn,
-                            property_indicator_code,
-                            census_tract,
-                            property_zipcode_5,
-                            property_zipcode_9,
-                            ))
-
-        pdb.set_trace()
-        # TODO: create fields specific to single family residences
-
-        # OLD BELOW ME
-        # make sure deed is one that we want
-        if not row['DOCUMENT TYPE CODE'] == 'G':
-            raise u.InputError('deed not a grant deed', row['DOCUMENT TYPE CODE'])
-
-        if not row['PRI CAT CODE'] == 'A':
-            raise u.InputError('deed not an arms-length transaction', row['PRI CAT CODE'])
-
-        if (not row['MULTI APN FLAG CODE'] == '') or int(row['MULTI APN COUNT']) > 1:
-            raise u.InputError('deed has multipe APNs', (row['MULTI APN FLAG CODE'], row['MULTI APN COUNT']))
-
-        if row['TRANSACTION TYPE CODE'] == '1':
-            pass  # resale
-        else:
-            if row['TRANSACTION TYPE CODE'] == '3':
-                pass  # new construction
-            else:
-                raise u.InputError('deed not resale nor new construction', row['TRANSACTION TYPE CODE'])
-
-        if row['SALE CODE'] == 'C':
-            pass  # confirmed (assumed to be full price)
-        elif row['SALE CODE'] == 'V':
-            pass  # verified (assume to be be full price)
-        elif row['SALE CODE'] == 'F':
-            pass  # full price
-        else:
-            raise u.InputError('deed not full price', row['SALE CODE'])
-
-        # build a list of valid values in the order defined by the create statement
-        values = []
-        try:
-            sale_date = u.as_date(row['SALE DATE'])
-        except Exception:
-            # NOTE: instead of giving up, one could impute the sale date from the recording date
-            # The sale date is about 2 months before the recording date
-            # The difference can be measured
-            raise u.InputError('invalid SALE DATE', row['SALE DATE'])
-
-        if sale_date < date_census_became_known:
-            raise u.InputError('sale date before date census became known', row['SALE DATE'])
-        else:
-            values.append(sale_date)
+            propn_code = row['PROPERTY INDICATOR CODE']
+            assert propn_code == self.propn_code_single_family_residential
+        except AssertionError:
+            raise u.InputError('not single family residence', propn_code)
 
         try:
             apn = u.best_apn(row['APN FORMATTED'], row['APN UNFORMATTED'])
         except Exception:
-            raise u.InputError('invalid APN', (row['APN FORMATTED'], row['APN UNFORMATTED']))
-
-        values.append(apn)
+            pdb.set_trace()
+            raise u.InputError('invalid APN', (row['APN UNFORMATTED'], row['APN FORMATTED']))
 
         try:
-            sale_amount = float(row['SALE AMOUNT'])
+            census_tract = int(row['CENSUS TRACT'])
         except Exception:
-            raise u.InputError('invalid SALE AMOUNT', row['SALE AMOUNT'])
+            pdb.set_trace()
+            raise u.InputError('invalid census tract', row['CENSUS TRACT'])
 
-        if sale_amount <= 0:
-            raise u.InputError('SALE AMOUNT not positive', sale_amount)
-        elif sale_amount > max_sale_amount:
-            raise u.InputError('SALE AMOUNT exceed maximum sale amount', sale_amount)
-        else:
-            values.append(sale_amount)
+        try:
+            property_city = row['PROPERTY CITY']
+            assert len(property_city) > 0
+        except AssertionError:
+            raise u.InputError('invalid property_city', row['PROPERTY CITY'])
 
-        key = (apn, sale_date)
-        sale_amounts[key].append(sale_amount)
-        if len(sale_amounts[key]) > 1:
-            raise u.InputError('multiple deed sale amounts', str((key, sale_amount)))
-        else:
-            return values
+        total_value_calculated = extract_positive_float('TOTAL VALUE CALCULATED')
+        land_square_footage = extract_positive_float('LAND SQUARE FOOTAGE')
+        living_square_feet = extract_positive_float('LIVING SQUARE FEET')
+        effective_year_built = extract_positive_float('EFFECTIVE YEAR BUILT')
+        bedrooms = extract_positive_float('BEDROOMS')
+        total_rooms = extract_positive_float('TOTAL ROOMS')
+        total_baths = extract_positive_float('TOTAL BATHS')
+        fireplace_number = extract_nonnegative_float('FIREPLACE NUMBER')
+        parking_spaces = extract_nonnegative_float('PARKING SPACES')
+        has_pool = 1.0 if row['POOL FLAG'] == 'Y' else 0.0
+        units_number = extract_positive_float('UNITS NUMBER')
 
-    pdb.set_trace()
-    conn.execute('DROP TABLE IF EXISTS deeds')
-    conn.execute(
-        '''CREATE TABLE parcels
-        ( apn                          integer NOT NULL
-        , property_indicator_code      integer NOT NULL
-        , census_tract                 integer NOT NULL
-        , property_zipcode_5           integer NOT NULL
-        , property_zipcode_9           integer NOT NULL
-        , improvement_value_calculated real
-        , land_value_calculated        real
-        , effective_year_built         integer
-        , number_of_buildings          integer
-        , total_rooms                  integer
-        , units_number                 integer
-        , property_indicator_code      text
-        , land_square_footage          real
-        , universal_land_use_code      text
-        , living_square_feet           real
-        , year_built                   integer
+        try:
+            assert apn not in self.features
+        except Exception:
+            print('duplicate apn', apn)
+            pdb.set_trace()
+
+        self.features[apn] = {
+            'census_tract': census_tract,
+            'property_city': property_city,
+            'total_value_calculated': total_value_calculated,
+            'land_square_footage': land_square_footage,
+            'living_square_feet': living_square_feet,
+            'effective_year_built': effective_year_built,
+            'bedrooms': bedrooms,
+            'total_rooms': total_rooms,
+            'total_baths': total_baths,
+            'fireplace_number': fireplace_number,
+            'parking_spaces': parking_spaces,
+            'has_pool': has_pool,
+            'units_number': units_number,
+            }
+        if debug:
+            print('apn', apn)
+            pprint.pprint(self.features[apn])
+        self.accumulated += 1
+
+    def log_summary(self):
+        '''summarize data, including num distinct values, mean, and variance'''
+        self.logger.info('parcels summary')
+        self.logger.info('created %d SFR parcels' % len(self.features))
+
+        # determine distinct values for each feature
+        distinct_values = collections.defaultdict(set)
+        for apn, features in self.features.items():
+            for feature_name, feature_value in features.items():
+                distinct_values[feature_name].add(feature_value)
+        for feature_name, distinct_value_list in distinct_values.items():
+            self.logger.info('feature %s: %d distinct values' % (feature_name, len(distinct_value_list)))
+        self.distinct_values = distinct_values
+
+    def create_tables(self):
+        '''create tables into parcels and parcel_feature_statistics'''
+
+        drop_stmt = '''DROP TABLE IF EXISTS parcels'''
+        self.conn.execute(drop_stmt)
+
+        create_stmt = '''CREATE TABLE parcels
+        ( apn                    integer NOT NULL
+        , census_tract           text    NOT NULL
+        , property_city          text    NOT NULL
+        , total_value_calculated real NOT NULL
+        , land_square_footage    real NOT NULL
+        , living_square_feet     real NOT NULL
+        , effective_year_built   real NOT NULL
+        , bedrooms               real NOT NULL
+        , total_rooms            real NOT NULL
+        , total_baths            real NOT NULL
+        , fireplace_number       real NOT NULL
+        , parking_spaces         real NOT NULL
+        , has_pool               real NOT NULL
+        , units_number           real NOT NULL
         , PRIMARY KEY (apn)
         )
         '''
-        )
-    pdb.set_trace()
+        self.conn.execute(create_stmt)
+
+        # insert each row
+        for apn, features in self.features.items():
+            self.conn.execute(
+                'INSERT INTO parcels VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                ((apn,
+                  features['census_tract'],
+                  features['property_city'],
+                  features['total_value_calculated'],
+                  features['land_square_footage'],
+                  features['living_square_feet'],
+                  features['effective_year_built'],
+                  features['bedrooms'],
+                  features['total_rooms'],
+                  features['total_baths'],
+                  features['fireplace_number'],
+                  features['parking_spaces'],
+                  features['has_pool'],
+                  features['units_number'],
+                  )))
+
+
+def read_taxrolls(conn, config, logger):
+    '''Create table parcels from data in taxroll zip files'''
+
+    debug = False
     counter = collections.Counter()
     error_reasons = collections.Counter()
-    debug = False
+    neighborhood = Neighborhood(conn, logger, 'codes_taxrolls')
+    parcel = Parcel(conn, logger)
+    n_retained = 0
+    n_skipped = 0
     for zipfilename in config['in_taxrolls']:
         # inflate the zip files directly because reading the archive members led to unicode issues
         # and to having to read the entire file into memory
@@ -490,45 +713,35 @@ def read_taxrolls(conn, config, logger):
             for row_index, row in enumerate(reader):
                 if debug:
                     print(row_index)
-                if False and row_index == 255716:
-                    print('found row_index', row_index)
-                    pdb.set_trace()
+
                 try:
-                    is_single_family_residence, values = make_values(row)
-                    conn.execute('INSERT INTO deeds VALUES (?, ?, ?)', values)
-                    counter['saved'] += 1
+                    neighborhood.accumulate(row)
+                    parcel.accumulate(row)
+                    n_retained += 1
                 except u.InputError as err:
-                    logger.warning('deed file %s record %d InputError %s' % (path_zip, row_index + 1, err))
                     counter['skipped'] += 1
                     error_reasons[err.reason] += 1
-                if debug:
-                    if len(sale_amounts) > 100:
-                        break
+                    n_skipped += 1
+                    continue
+                if debug and parcel.accumulated > 100:
+                    break
+                continue
         logger.info('read all deeds from %s' % path_zip)
         cp_rm = subprocess.run(['rm', path_txt])
         assert cp_rm.returncode == 0
-    print('read all deeds zipfiles')
+    print('read all taxroll zipfiles')
+    logger.info('retained %d parcels' % n_retained)
+    logger.info('skipped %d parcels' % n_skipped)
+    logger.info(' ')
+    logger.info('reasons parcel was not saved')
+    for reason in error_reasons.keys():
+        logger.info(' reason %s occured %d times' % (reason, error_reasons[reason]))
 
-    # delete deeds records where an APN has multiple valid deeds on same date with different prices.
-    # NOTE: View the log files to see that most of the time, those multiple deeds have the same price.
-    for apn_date, prices in sale_amounts.items():
-        if len(prices) > 1:
-            logger.warning('duplicate sale amounts for deed %s' % str(apn_date))
-            for price in prices:
-                logger.warning('  duplicate price        %f' % price)
-            if len(set(prices)) == 1:
-                continue  # all prices the same
-            stmt = 'DELETE FROM deeds WHERE apn = %s AND sale_date = %s' % (apn_date[0], apn_date[1])
-            conn.execute(stmt)
-            logger.warning('deed record deleted')
-            counter['saved then deleted'] += 1
-
-    # Summarize results
-    for k, v in counter.items():
-        logger.info('deeds counter %30s = %7d' % (k, v))
-    for k in sorted(error_reasons.keys()):
-        logger.info('deeds input error %7d x %s' % (error_reasons[k], k))
-    pass
+    # create neighborhood table
+    neighborhood.log_summary()
+    neighborhood.create_table()
+    parcel.log_summary()
+    parcel.create_tables()
 
 
 def main(argv):
@@ -547,14 +760,11 @@ def main(argv):
     if True:
         read_codes_deeds(conn, config, logger)
         read_codes_taxrolls(conn, config, logger)
-    if True:
         read_deeds(conn, config, logger)
-    if False:
         read_taxrolls(conn, config, logger)
+    if False:
         read_census(conn, config, logger)
-
         create_transactions(conn)
-
         delete_intermediate_tables(conn)
 
     conn.commit()
