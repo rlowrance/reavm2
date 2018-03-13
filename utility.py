@@ -36,20 +36,28 @@ class NotUnique(Error):
 
 
 def as_date(s: str) -> datetime.date:
-    '''Convert string to a datetime or raise an error
+    '''Convert string to a (datetime, warning) or raise ValueError
 
-    Convert day 0 to day 1
+    Convert day 0 to day 1 and provide a warning when this was done
 
-    The call to datetime.date() will raise an error, if the date is not in the calendar
+    The call to datetime.date() will raise ValueError, if the date is not in the calendar
     '''
     if '-' in s:
         # assume format is YYYY-MM-DD
-        year, month, day = s.split('-')
-        return datetime.date(int(year), int(month), int(day) if day != '00' else 1)
+        year_s, month_s, day_s = s.split('-')
+        year = int(year_s)
+        month = int(month_s)
+        day = int(day_s)
     else:
         # assume format is YYYYMMDD
+        year = int(s[0:4])
+        month = int(s[4:6])
         day = int(s[6:8])
-        return datetime.date(int(s[0:4]), int(s[4:6]), day if day > 0 else 1)
+
+    if day == 0:
+        return (datetime.date(year, month, 1), '0 to 1')
+    else:
+        return (datetime.date(year, month, day), None)
 
 
 def best_apn(formatted: str, unformatted: str) -> int:
