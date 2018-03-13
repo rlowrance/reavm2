@@ -744,8 +744,143 @@ def read_taxrolls(conn, config, logger):
     parcel.create_tables()
 
 
-def main(argv):
+class Census:
+    def __init__(self, conn, logger):
+        self.conn = conn
+        self.logger = logger
+
+        self.features = collections.defaultdict(dict)  # key = census_tract  value = map of features
+        self.mean_travel_times = {
+            'P031003': 2.5,
+            'P031004': 7.0,
+            'P031005': 12.0,
+            'P031006': 17.0,
+            'P031007': 22.0,
+            'P031008': 27.0,
+            'P031009': 32.0,
+            'P031010': 37.0,
+            'P031011': 42.0,
+            'P031012': 47.0,
+            'P031013': 72.5,
+            'P031014': 110.0,  # 90 minutes or more
+        }
+
+    def accumulate(self, row):
+        'assumulate features of each census tract'
+        try:
+            value_str = row['GEO_ID2']
+            census_tract = value_str[4:]
+            assert len(census_tract) == 6
+        except AssertionError:
+            pdb.set_trace()
+            raise u.InputError('invalid census tract', value_str)
+
+        # mean commute times
+        n_in_census_tract = 0
+        weighted_sum = 0.0
+        for column_name, column_mean_travel_time in self.mean_travel_times.items():
+            n_str = row[column_name]
+            try:
+                n = int(n_str)
+            except ValueError:
+                raise u.InputError('non-int %s' % column_name, n_str)
+            n_in_census_tract += n
+            weighted_sum = n * column_mean_travel_time
+        if n_in_census_tract == 0:
+            raise u.InputError('no commuters in census tract', census_tract)
+        mean_commute_time_minutes = weighted_sum / n_in_census_tract
+
+        # median household income
+        try:
+            value_str = row['P053001']  # in 1999
+            median_household_income = float(value_str)
+        except ValueError:
+            raise u.InputError('non-float median household income', value_str)
+        median_household_income = median_household_income
+
+        # fraction of units that are owner occupied
+        try:
+            total_str = row['H007001']
+            total = float(total_str)
+        except ValueError:
+            raise u.InputError('non-float in total occupied', total_str)
+
+        try:
+            owner_str = row['H007002']
+            owner = float(owner_str)
+        except ValueError:
+            raise u.InputError('non-float in owner occupied', owner_str)
+
+        if total == 0.0:
+            raise u.InputError('zero residences occupied', None)
+        else:
+            fraction_owner_occupied = owner / total
+
+        self.features[census_tract]['mean_commute_time_minutes'] = mean_commute_time_minutes
+        self.features[census_tract]['median_household_income'] = median_household_income
+        self.features[census_tract]['fraction_owner_occupied'] = fraction_owner_occupied
+
+    def log_summary(self):
+        pdb.set_trace()
+        self.logger.info('found %d census tracts with usable data' % len(self.features))
+
+    def create_table(self):
+        stmt_drop = '''DROP TABLE IF EXISTS census'''
+        self.conn.execute(stmt_drop)
+
+        stmt_create = '''CREATE TABLE census
+        ( census_tract              text NOT NULL
+        , mean_commute_time_minutes real NOT NULL
+        , median_household_income   real NOT NULL
+        , fraction_owner_occupied   real NOT NULL
+        , PRIMARY KEY (census_tract)
+        )
+        '''
+        self.conn.execute(stmt_create)
+
+        for census_tract, feature_dict in self.features.items():
+            self.conn.execute(
+                'INSERT into census VALUES (?, ?, ?, ?)', (
+                    census_tract,
+                    feature_dict['mean_commute_time_minutes'],
+                    feature_dict['median_household_income'],
+                    feature_dict['fraction_owner_occupied'],
+                    ),
+                )
+
+
+def read_census(conn, config, logger):
+    '''Create table census from data in census file'''
+    debug = False
+    path = os.path.join(config['dir_data'], config['in_census'])
+    census = Census(conn, logger)
+    n_retained = 0
+    n_skipped = 0
+    error_reasons = collections.Counter()
     pdb.set_trace()
+    with open(path) as csvfile:
+        reader = csv.DictReader(csvfile, delimiter='\t')
+        for row_index, row in enumerate(reader):
+            if debug:
+                print(row_index)
+                pprint.pprint(row)
+            if row_index == 0:
+                continue  # skip explanations of column names
+            try:
+                census.accumulate(row)
+                n_retained += 1
+            except u.InputError as err:
+                n_skipped += 1
+                error_reasons[err.reason] += 1
+    logger.info('read all census records')
+    logger.info(' retained %d' % n_retained)
+    logger.info(' skipped %d' % n_skipped)
+
+    # census.log_summary()
+    census.create_table()
+
+
+def main(argv):
     config = u.parse_invocation_arguments(argv)
     logger = u.make_logger(argv[0], config)
     u.log_config(argv[0], config, logger)
@@ -757,13 +892,14 @@ def main(argv):
         )
     conn.row_factory = sqlite3.Row
 
-    if True:
+    if False:
         read_codes_deeds(conn, config, logger)
         read_codes_taxrolls(conn, config, logger)
         read_deeds(conn, config, logger)
         read_taxrolls(conn, config, logger)
-    if False:
+    if True:
         read_census(conn, config, logger)
+    if False:
         create_transactions(conn)
         delete_intermediate_tables(conn)
 
