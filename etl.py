@@ -59,6 +59,8 @@ def lookup_code(conn, table_name, code_table, description):
 
 def read_codes(conn, config, logger, table_name):
     '''Create table codes_deeds from info in config['in_codes_deeds']'''
+    debug = False
+
     def skip_code(table_name, row):
         '''Return True iff the code should be skipped
 
@@ -91,15 +93,11 @@ def read_codes(conn, config, logger, table_name):
     with open(path, encoding='latin-1') as csvfile:
         reader = csv.DictReader(csvfile, delimiter=',')
         for row_index, row in enumerate(reader):
-            pprint.pprint(row)
+            if debug:
+                pprint.pprint(row)
             if skip_code(table_name, row):
                 logger.warning('skipping code: %s %s' % (table_name, str(row)))
                 continue
-
-            if False:
-                print('existing values')
-                for existing in conn.execute('SELECT * from %s' % table_name):
-                    print(tuple(existing))
 
             # Some rows are duplicated in the taxrolls code table
             # This code handles that by skipping code-description values already in the code table
@@ -136,78 +134,82 @@ def read_codes_taxrolls(conn, config, logger):
     return read_codes(conn, config, logger, 'codes_taxrolls')
 
 
-def read_deeds(conn, config, logger):
-    '''Create table deeds from data in deeds zip files'''
-    sale_amounts = collections.defaultdict(list)
-    date_census_became_known = u.as_date(config['date_census_became_known'])
-    max_sale_amount = float(config['max_sale_amount'])
+class Deed:
+    def __init__(self, conn, config, logger):
+        def get_code(table_name, description):
+            return lookup_code(conn, 'codes_deeds', table_name, description)
 
-    code_single_family_residence = lookup_code(conn, 'codes_deeds', 'PROPN', 'Single Family Residence / Townhouse')
-    code_grant_deed = lookup_code(conn, 'codes_deeds', 'DEEDC', 'GRANT DEED')
-    code_arms_length = lookup_code(conn, 'codes_deeds', 'PRICATCODE', 'ARMS LENGTH TRANSACTION')
-    code_resale = lookup_code(conn, 'codes_deeds', 'TRNTP', 'RESALE')
-    code_new_construction = lookup_code(conn, 'codes_deeds', 'TRNTP', 'SUBDIVISION/NEW CONSTRUCTION')
-    # code_sale_confirmed = lookup_code(conn, 'codes_deeds', 'SCODE', 'CONFIRMED')
-    # code_sale_verified = lookup_code(conn, 'codes_deeds', 'SCODE', 'VERIFIED')
-    code_sale_full_price = lookup_code(conn, 'codes_deeds', 'SCODE', 'SALE PRICE (FULL)')
+        self.conn = conn
+        self.config = config
+        self.logger = logger
 
-    def make_values(row: dict) -> typing.List:
-        'return list of values or raise ValueError if the row is not valid'
-        if False:
-            pprint.pprint(row)
+        # constraining values
+        self.date_census_became_known = u.as_date(config['date_census_became_known'])[0]
+        self.max_sale_amount = float(config['max_sale_amount'])
+
+        # codes in the deeds files
+        self.code_single_family_residence = get_code('PROPN', 'Single Family Residence / Townhouse')
+        self.code_grant_deed = get_code('DEEDC', 'GRANT DEED')
+        self.code_arms_length = get_code('PRICATCODE', 'ARMS LENGTH TRANSACTION')
+        self.code_resale = get_code('TRNTP', 'RESALE')
+        self.code_new_construction = get_code('TRNTP', 'SUBDIVISION/NEW CONSTRUCTION')
+        self.code_sale_full_price = get_code('SCODE', 'SALE PRICE (FULL)')
+
+        self.sale_amounts = {}  # key = (apn, sale_date)  value = sale_amount
+        self.sale_date_day_0_converted_to_1 = 0
+
+    def accumulate(self, row):
+        '''Mutate self.features or raise u.InputError'''
+
         # make sure deed is one that we want
-        if not row['PROPERTY INDICATOR CODE'] == code_single_family_residence:
+        if not row['PROPERTY INDICATOR CODE'] == self.code_single_family_residence:
             raise u.InputError('not a single family residence', row['PROPERTY INDICATOR CODE'])
 
-        if not row['DOCUMENT TYPE CODE'] == code_grant_deed:
+        if not row['DOCUMENT TYPE CODE'] == self.code_grant_deed:
             raise u.InputError('deed not a grant deed', row['DOCUMENT TYPE CODE'])
 
-        if not row['PRI CAT CODE'] == code_arms_length:
+        if not row['PRI CAT CODE'] == self.code_arms_length:
             raise u.InputError('deed not an arms-length transaction', row['PRI CAT CODE'])
 
         # Assume that if the MULTI APLN FLAG CODE is missing, then one APN was sold
         if (not row['MULTI APN FLAG CODE'] == '') or int(row['MULTI APN COUNT']) > 1:
             raise u.InputError('deed has multipe APNs', (row['MULTI APN FLAG CODE'], row['MULTI APN COUNT']))
 
-        # these codes are truncated in the file (leading zeros are omitted)
         try:
-            ttc = int(row['TRANSACTION TYPE CODE'])
+            ttc = int(row['TRANSACTION TYPE CODE'])  # convert to int, since leading zeroes are omitted in file
         except ValueError:
             raise u.InputError('TRANSACTION TYPE CODE not an int', row['TRANSACTION TYPE CODE'])
 
-        if ttc in (int(code_resale), int(code_new_construction)):
+        if ttc in (int(self.code_resale), int(self.code_new_construction)):
             pass
         else:
             raise u.InputError('deed not resale nor new construction', row['TRANSACTION TYPE CODE'])
 
         # Version 1 accepted sale_code_confirmed and sale_code_verified as well
         # However, we don't know that the confirmations and verifications were for a transaction with full price
-        if row['SALE CODE'] == code_sale_full_price:
+        # So this version accepts fewer deeds with the hope that those accepted are more accurate.
+        if row['SALE CODE'] == self.code_sale_full_price:
             pass  # full price
         else:
             raise u.InputError('deed not full price', row['SALE CODE'])
 
-        # build a list of valid values in the order defined by the create statement
-        values = []
+        # attempt to extract the feature values
         try:
-            sale_date = u.as_date(row['SALE DATE'])
+            sale_date, e = u.as_date(row['SALE DATE'])
+            if e == '0 to 1':
+                self.sale_date_day_0_converted_to_1 += 1
         except Exception:
-            # NOTE: instead of giving up, one could impute the sale date from the recording date
-            # The sale date is about 2 months before the recording date
-            # The difference can be measured
+            # Earlier versions of this program imputed the sale date from the recording date
+            # This version prefers more accurate sales dates rather than more sale amounts
             raise u.InputError('invalid SALE DATE', row['SALE DATE'])
 
-        if sale_date < date_census_became_known:
+        if sale_date < self.date_census_became_known:
             raise u.InputError('sale date before date census became known', row['SALE DATE'])
-        else:
-            values.append(sale_date)
 
         try:
             apn = u.best_apn(row['APN FORMATTED'], row['APN UNFORMATTED'])
         except Exception:
             raise u.InputError('invalid APN', (row['APN FORMATTED'], row['APN UNFORMATTED']))
-
-        values.append(apn)
 
         try:
             sale_amount = float(row['SALE AMOUNT'])
@@ -216,36 +218,60 @@ def read_deeds(conn, config, logger):
 
         if sale_amount <= 0:
             raise u.InputError('SALE AMOUNT not positive', sale_amount)
-        elif sale_amount > max_sale_amount:
+        if sale_amount > self.max_sale_amount:
             raise u.InputError('SALE AMOUNT exceed maximum sale amount', sale_amount)
-        else:
-            values.append(sale_amount)
 
         key = (apn, sale_date)
-        sale_amounts[key].append(sale_amount)
-        if len(sale_amounts[key]) > 1:
-            raise u.InputError('multiple deed sale amounts', str((key, sale_amount)))
+        if key in self.sale_amounts:
+            if self.sale_amounts[key] != sale_amount:
+                # possible one of the extra sale amounts is a correction
+                # but this program doesn't try to handle that condidtion
+                raise u.InputError('multiple deed sale amounts', str((key, sale_amount, self.sale_amounts[key])))
         else:
-            return values
+            self.sale_amounts[key] = sale_amount
 
-    conn.execute('DROP TABLE IF EXISTS deeds')
-    conn.execute(
-        '''CREATE TABLE deeds
-        ( apn         integer NOT NULL
-        , sale_date   date    NOT NULL
-        , sale_amount real    NOT NULL
-        , PRIMARY KEY (apn, sale_date)
+    def log_summary(self):
+        self.logger.info('%d sale dates with day 0 converted to day 1' % self.sale_date_day_0_converted_to_1)
+        pass
+
+    def create_table(self):
+        pdb.set_trace()
+        self.conn.execute('DROP TABLE IF EXISTS deeds')
+        self.conn.execute(
+            '''CREATE TABLE deeds
+            ( apn         integer NOT NULL
+            , sale_date   date    NOT NULL
+            , sale_amount real    NOT NULL
+            , PRIMARY KEY (apn, sale_date)
+            )
+            '''
         )
-        '''
-        )
+
+        for key, sale_amounts in self.sale_amounts.items():
+            assert len(sale_amounts) == 1
+            for sale_amount in sale_amounts:
+                apn, sale_date = key
+                self.conn.execute(
+                    'INSERT INTO deeds VALUES (?, ?, ?)',
+                    (apn,
+                     sale_date,
+                     sale_amount,
+                     ))
+        pdb.set_trace()
+
+
+def read_deeds(conn, config, logger):
+    '''Create table deeds from data in deeds zip files'''
+    debug = False
+
     counter = collections.Counter()
     error_reasons = collections.Counter()
-    debug = False
+    deed = Deed(conn, config, logger)
     for zipfilename in config['in_deeds']:
         # inflate the zip files directly because reading the archive members led to unicode issues
         # and to having to read the entire file into memory
         if debug:
-            if not zipfilename.endswith('F1.zip'):
+            if not zipfilename.endswith('F7.zip'):
                 print('DEBUG: skipping', zipfilename)
                 continue
         path_zip = os.path.join(config['dir_data'], zipfilename)
@@ -266,44 +292,30 @@ def read_deeds(conn, config, logger):
             # Hyp: the problem is that the file contains a quoting char in one of the tab-delimited fields
             reader = csv.DictReader(csvfile, delimiter='\t', quoting=csv.QUOTE_NONE)
             for row_index, row in enumerate(reader):
-                if debug:
+                if debug and False:
                     print(row_index)
+                    pprint.pprint(row)
                 try:
-                    values = make_values(row)
-                    conn.execute('INSERT INTO deeds VALUES (?, ?, ?)', values)
-                    counter['saved'] += 1
+                    deed.accumulate(row)
+                    counter['accumulated'] += 1
                 except u.InputError as err:
                     # logger.warning('deed file %s record %d InputError %s' % (path_zip, row_index + 1, err))
                     counter['skipped'] += 1
                     error_reasons[err.reason] += 1
                 if debug:
-                    if len(sale_amounts) > 100:
+                    if counter['accumulate'] > 100:
                         break
         logger.info('read all deeds from %s' % path_zip)
         cp_rm = subprocess.run(['rm', path_txt])
         assert cp_rm.returncode == 0
-    print('read all deeds zipfiles')
-
-    # delete deeds records where an APN has multiple valid deeds on same date with different prices.
-    # NOTE: View the log files to see that most of the time, those multiple deeds have the same price.
-    for apn_date, prices in sale_amounts.items():
-        if len(prices) > 1:
-            logger.warning('duplicate sale amounts for deed %s' % str(apn_date))
-            for price in prices:
-                logger.warning('  duplicate price        %f' % price)
-            if len(set(prices)) == 1:
-                continue  # all prices the same
-            stmt = 'DELETE FROM deeds WHERE apn = %s AND sale_date = %s' % (apn_date[0], apn_date[1])
-            conn.execute(stmt)
-            logger.warning('deed record deleted')
-            counter['saved then deleted'] += 1
-
-    # Summarize results
+    logger.info('read all deeds zipfiles')
+    deed.log_summary()
     for k, v in counter.items():
-        logger.info('deeds counter %30s = %7d' % (k, v))
-    for k in sorted(error_reasons.keys()):
-        logger.info('deeds input error %7d x %s' % (error_reasons[k], k))
-    return
+        logger.info(' %s occured %d times' % (k, v))
+    logger.info('reasons taxroll records were skipped')
+    for k, v in error_reasons.items():
+        logger.info(' %50s: %d times' % (k, v))
+    pass
 
 
 class Neighborhood:
@@ -857,7 +869,6 @@ def read_census(conn, config, logger):
     n_retained = 0
     n_skipped = 0
     error_reasons = collections.Counter()
-    pdb.set_trace()
     with open(path) as csvfile:
         reader = csv.DictReader(csvfile, delimiter='\t')
         for row_index, row in enumerate(reader):
@@ -892,12 +903,11 @@ def main(argv):
         )
     conn.row_factory = sqlite3.Row
 
-    if False:
+    if True:
         read_codes_deeds(conn, config, logger)
         read_codes_taxrolls(conn, config, logger)
         read_deeds(conn, config, logger)
         read_taxrolls(conn, config, logger)
-    if True:
         read_census(conn, config, logger)
     if False:
         create_transactions(conn)
