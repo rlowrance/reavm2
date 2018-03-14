@@ -235,7 +235,7 @@ class Deed:
         pass
 
     def create_table(self):
-        pdb.set_trace()
+        debug = False
         self.conn.execute('DROP TABLE IF EXISTS deeds')
         self.conn.execute(
             '''CREATE TABLE deeds
@@ -247,17 +247,20 @@ class Deed:
             '''
         )
 
-        for key, sale_amounts in self.sale_amounts.items():
-            assert len(sale_amounts) == 1
-            for sale_amount in sale_amounts:
-                apn, sale_date = key
-                self.conn.execute(
-                    'INSERT INTO deeds VALUES (?, ?, ?)',
-                    (apn,
-                     sale_date,
-                     sale_amount,
-                     ))
-        pdb.set_trace()
+        for key, sale_amount in self.sale_amounts.items():
+            apn, sale_date = key
+            self.conn.execute(
+                'INSERT INTO deeds VALUES (?, ?, ?)',
+                (apn,
+                 sale_date,
+                 sale_amount,
+                ))
+        if debug:
+            print('first 10 rows in table deeds')
+            pdb.set_trace()
+            for row in self.conn.execute('SELECT * FROM deeds LIMIT 10'):
+                pprint.pprint(dict(row))
+            pdb.set_trace()
 
 
 def read_deeds(conn, config, logger):
@@ -315,6 +318,7 @@ def read_deeds(conn, config, logger):
     logger.info('reasons taxroll records were skipped')
     for k, v in error_reasons.items():
         logger.info(' %50s: %d times' % (k, v))
+    deed.create_table()
     pass
 
 
@@ -891,6 +895,85 @@ def read_census(conn, config, logger):
     census.create_table()
 
 
+def create_transactions(conn, config, logger):
+    '''Join deeds, parcels, neighborhoods, and census to create table transactions
+
+    Create feature just_for_experiments in {0, 1} for a random 80% of the transactions.
+    '''
+    def head(table_name, n=3):
+        pdb.set_trace()
+        print('head %s' % table_name)
+        i = 0
+        stmt = 'SELECT * FROM %s' % table_name
+        for row in conn.execute(stmt):
+            # OverflowError: signed integer is greater than maximum
+            # could be a datetime.date problem
+            pprint(dict(row))
+            i += 1
+            if i == n:
+                break
+        pdb.set_trace()
+        
+    pdb.set_trace()
+    head('deeds')
+    head('parcels')
+    conn.execute('DROP TABLE IF EXISTS transactions')
+    conn.execute(
+        '''CREATE TABLE transactions AS SELECT
+        deeds.apn AS apn,
+        deeds.sale_date AS sale_date,
+        deeds.sale_amount AS sale_amount,
+        parcels.census_tract AS census_tract
+        FROM deeds
+        INNER JOIN parcels ON parcels.apn = deeds.apn
+        ''')
+    i = 0
+    for row in conn.execute('SELECT * FROM transactions'):
+        pprint.pprint(row)
+        i += 1
+        if i > 3:
+            break
+    count = conn.execute('SELECT (SELECT count() FROM transactions) as count, * FROM transactions')
+    print(count)
+        
+    pdb.set_trace()
+    conn.execute(
+        ''''CREATE TABLE transactions AS SELECT
+        deeds.apn as apn,
+        deeds.sale_date as sale_date,
+        deeds.sale_amount as sale_amount,
+        parcels.census_tract as census_tract,
+        parcels.property_city as property_city,
+        parcels.total_value_calculated as total_value_calculated,
+        parcels.land_square_footage as land_square_footage,
+        parcels.living_square_feet as living_square_feet,
+        parcels.effective_year_built as effective_year_built,
+        parcels.bedrooms as bedrooms,
+        parcels.total_roms as total_rooms,
+        parcels.total_baths as total_baths,
+        parcels.fireplace_number as fireplace_number,
+        parcels.parking_spaces as parking_spaces,
+        parcels.has_pool as has_pool,
+        parcels.units_number as units_number
+        neighborhoods.fraction_land_square_footage_residential as census_tract_fraction_land_residential,
+        neighborhoods.fraction_land_square_footage_commercial as census_tract_fraction_land_commercial,
+        neighborhoods.fraction_land_square_footage_industrial as census_tract_fraction_land_industrial,
+        neighborhoods.fraction_land_square_footage_schools as census_tract_land_schools,
+        neighborhoods.fraction_land_square_footage_parks as census_tract_land_parks,
+        census.mean_commute_time_minutes as census_tract_means_commute_time_minutes,
+        census.median_household_income as census_tract_median_household_income,
+        census.fraction_owner_occupied as census_tract_fraction_owner_occupied.
+        FROM deeds
+        INNER JOIN parcels ON parcels.apn = deeds.apn
+        INNER JOIN neighborhoods ON neighborhoods.census_tract = parcels.census_tract
+        INNER JOIN census on census.census_tract = parcels.census_tract
+        ''')
+    pdb.set_trace()
+    conn.execute('ALTER TABLE transaction add use_for_experiments real NOT NULL')
+    print('populate that column to mimic what was done before')
+    pass
+        
+    
 def main(argv):
     config = u.parse_invocation_arguments(argv)
     logger = u.make_logger(argv[0], config)
@@ -910,7 +993,8 @@ def main(argv):
         read_taxrolls(conn, config, logger)
         read_census(conn, config, logger)
     if False:
-        create_transactions(conn)
+        create_transactions(conn, config, logger)
+    if False:
         delete_intermediate_tables(conn)
 
     conn.commit()
