@@ -4,7 +4,7 @@ import collections
 import datetime
 import json
 import logging
-from typing import Dict, List
+from typing import Dict, List, Union
 import os
 import pdb
 import sys
@@ -21,7 +21,7 @@ class InputError(Error):
     def __init__(self, reason, detail):
         self.reason = reason
         self.detail = detail
-
+        
 
 class NotFoundError(Error):
     '''key was not found'''
@@ -35,7 +35,7 @@ class NotUnique(Error):
         self.value = value
 
 
-def as_date(s: str) -> datetime.date:
+def as_date(s: str) -> (datetime.date, Union[None, str]):
     '''Convert string to a (datetime, warning) or raise ValueError
 
     Convert day 0 to day 1 and provide a warning when this was done
@@ -55,7 +55,7 @@ def as_date(s: str) -> datetime.date:
         day = int(s[6:8])
 
     if day == 0:
-        return (datetime.date(year, month, 1), '0 to 1')
+        return (datetime.date(year, month, 1), 'day 0 to 1')
     else:
         return (datetime.date(year, month, day), None)
 
@@ -182,13 +182,15 @@ def log_config(module_name: str, config: Dict, logger) -> None:
 
 class TestAsDate(unittest.TestCase):
     def test_1(self):
-        d = as_date('1994-12-11')
+        d, err = as_date('1994-12-11')
+        assert err is None
         self.assertEqual(d.year, 1994)
         self.assertEqual(d.month, 12)
         self.assertEqual(d.day, 11)
 
     def test_2(self):
-        d = as_date('19941211')
+        d, err = as_date('19941211')
+        assert err is None
         self.assertEqual(d.year, 1994)
         self.assertEqual(d.month, 12)
         self.assertEqual(d.day, 11)
@@ -199,6 +201,13 @@ class TestAsDate(unittest.TestCase):
             self.fail('should have raised an error')
         except Exception:
             self.assertTrue(True)
+
+    def test_4(self):
+        d, err = as_date('19941200')
+        assert err is not None
+        self.assertEqual(d.year, 1994)
+        self.assertEqual(d.month, 12)
+        self.assertEqual(d.day, 1)
 
 
 class TestMakeLogger(unittest.TestCase):
