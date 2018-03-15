@@ -30,6 +30,7 @@ import numpy as np
 import os
 import pdb
 import pprint
+import random
 import sqlite3
 import subprocess
 import sys
@@ -241,6 +242,9 @@ class Deed:
             '''CREATE TABLE deeds
             ( apn         integer NOT NULL
             , sale_date   date    NOT NULL
+            , sale_year   integer NOT NULL
+            , sale_month  integer NOT NULL
+            , sale_day    integer NOT NULL
             , sale_amount real    NOT NULL
             , PRIMARY KEY (apn, sale_date)
             )
@@ -250,9 +254,12 @@ class Deed:
         for key, sale_amount in self.sale_amounts.items():
             apn, sale_date = key
             self.conn.execute(
-                'INSERT INTO deeds VALUES (?, ?, ?)',
+                'INSERT INTO deeds VALUES (?, ?, ?, ?, ?, ?)',
                 (apn,
                  sale_date,
+                 sale_date.year,
+                 sale_date.month,
+                 sale_date.day,
                  sale_amount,
                 ))
         if debug:
@@ -900,77 +907,157 @@ def create_transactions(conn, config, logger):
 
     Create feature just_for_experiments in {0, 1} for a random 80% of the transactions.
     '''
+    debug = True
     def head(table_name, n=3):
-        pdb.set_trace()
         print('head %s' % table_name)
         i = 0
         stmt = 'SELECT * FROM %s' % table_name
         for row in conn.execute(stmt):
             # OverflowError: signed integer is greater than maximum
             # could be a datetime.date problem
-            pprint(dict(row))
+            pprint.pprint(dict(row))
             i += 1
             if i == n:
                 break
-        pdb.set_trace()
         
-    pdb.set_trace()
     head('deeds')
     head('parcels')
-    conn.execute('DROP TABLE IF EXISTS transactions')
-    conn.execute(
-        '''CREATE TABLE transactions AS SELECT
-        deeds.apn AS apn,
-        deeds.sale_date AS sale_date,
-        deeds.sale_amount AS sale_amount,
-        parcels.census_tract AS census_tract
-        FROM deeds
-        INNER JOIN parcels ON parcels.apn = deeds.apn
-        ''')
-    i = 0
-    for row in conn.execute('SELECT * FROM transactions'):
-        pprint.pprint(row)
-        i += 1
-        if i > 3:
-            break
-    count = conn.execute('SELECT (SELECT count() FROM transactions) as count, * FROM transactions')
-    print(count)
+    head('neighborhoods')
+    head('census')
         
-    pdb.set_trace()
+    conn.execute('DROP TABLE IF EXISTS transactions')
+    # conn.execute(
+    #     '''CREATE TABLE transactions AS
+    #     SELECT deeds.apn as apn
+    #     , deeds.sale_date as sale_date
+    #     , parcels.census_tract as census_tract
+    #     , neighborhoods.fraction_land_square_footage_residential as census_tract_fraction_land_residential
+    #     , census.mean_commute_time_minutes as census_tract_mean_commute_time_minutes
+    #     , census.median_household_income as census_tract_median_household_income
+    #     , census.fraction_owner_occupied as census_tract_fraction_owner_occupied
+    #     FROM deeds
+    #     INNER JOIN parcels ON parcels.apn = deeds.apn
+    #     INNER JOIN neighborhoods ON neighborhoods.census_tract = parcels.census_tract
+    #     INNER JOIN census on census.census_tract = parcels.census_tract
+    #     ''')
+    # print('first create executed')
     conn.execute(
-        ''''CREATE TABLE transactions AS SELECT
-        deeds.apn as apn,
-        deeds.sale_date as sale_date,
-        deeds.sale_amount as sale_amount,
-        parcels.census_tract as census_tract,
-        parcels.property_city as property_city,
-        parcels.total_value_calculated as total_value_calculated,
-        parcels.land_square_footage as land_square_footage,
-        parcels.living_square_feet as living_square_feet,
-        parcels.effective_year_built as effective_year_built,
-        parcels.bedrooms as bedrooms,
-        parcels.total_roms as total_rooms,
-        parcels.total_baths as total_baths,
-        parcels.fireplace_number as fireplace_number,
-        parcels.parking_spaces as parking_spaces,
-        parcels.has_pool as has_pool,
-        parcels.units_number as units_number
-        neighborhoods.fraction_land_square_footage_residential as census_tract_fraction_land_residential,
-        neighborhoods.fraction_land_square_footage_commercial as census_tract_fraction_land_commercial,
-        neighborhoods.fraction_land_square_footage_industrial as census_tract_fraction_land_industrial,
-        neighborhoods.fraction_land_square_footage_schools as census_tract_land_schools,
-        neighborhoods.fraction_land_square_footage_parks as census_tract_land_parks,
-        census.mean_commute_time_minutes as census_tract_means_commute_time_minutes,
-        census.median_household_income as census_tract_median_household_income,
-        census.fraction_owner_occupied as census_tract_fraction_owner_occupied.
+        '''CREATE TABLE transactions AS
+        SELECT deeds.apn as apn
+        , deeds.sale_date as sale_date
+        , deeds.sale_year as sale_year
+        , deeds.sale_month as sale_month
+        , deeds.sale_amount as sale_amount
+        , parcels.census_tract as census_tract
+        , parcels.property_city as property_city
+        , parcels.total_value_calculated as total_value_calculated
+        , parcels.land_square_footage as land_square_footage
+        , parcels.living_square_feet as living_square_feet
+        , parcels.effective_year_built as effective_year_built
+        , parcels.bedrooms as bedrooms
+        , parcels.total_rooms as total_rooms
+        , parcels.total_baths as total_baths
+        , parcels.fireplace_number as fireplace_number
+        , parcels.parking_spaces as parking_spaces
+        , parcels.has_pool as has_pool
+        , parcels.units_number as units_number
+        , neighborhoods.fraction_land_square_footage_residential as census_tract_fraction_land_residential
+        , neighborhoods.fraction_land_square_footage_commercial as census_tract_fractin_land_commercial
+        , neighborhoods.fraction_land_square_footage_industrial as census_tract_fraction_land_industrial
+        , neighborhoods.fraction_land_square_footage_schools as census_tract_fraction_land_schools
+        , neighborhoods.fraction_land_square_footage_parks as census_tract_fraction_land_parks
+        , census.mean_commute_time_minutes as census_tract_mean_commute_time_minutes
+        , census.median_household_income as census_tract_median_household_income
+        , census.fraction_owner_occupied as census_tract_fraction_owner_occupied
         FROM deeds
         INNER JOIN parcels ON parcels.apn = deeds.apn
         INNER JOIN neighborhoods ON neighborhoods.census_tract = parcels.census_tract
         INNER JOIN census on census.census_tract = parcels.census_tract
         ''')
-    pdb.set_trace()
-    conn.execute('ALTER TABLE transaction add use_for_experiments real NOT NULL')
-    print('populate that column to mimic what was done before')
+    conn.execute(
+        '''CREATE INDEX transactions_apn ON transactions (apn)'''
+        )
+    conn.execute(
+        '''CREATE INDEX transactions_sale_date ON transactions (sale_date)'''
+        )
+    conn.execute(
+        '''CREATE INDEX transactions_sale_year ON transactions (sale_year)'''
+        )
+    conn.execute(
+        '''CREATE INDEX transactions_sale_month ON transactions (sale_month)'''
+        )
+    head('transactions')
+    for row in conn.execute('SELECT (SELECT count() FROM transactions) as count, * FROM transactions'):
+        print('count transactions = ', row['count'])
+        break
+
+    # split the transactions into in_testing and otherwise (in_training)
+    # This program stratifies by transaction.sale_date month
+    # It marks a random 80% of the transactions in each month as use_for_experiments
+    # After the experiments are finished, the best model will be retrained 
+    # A prior version did this work in the module samples.py
+    # - It used scikit learn cross_validation.StratisfiedShuffleSplit
+    conn.execute('ALTER TABLE transactions ADD COLUMN in_training real NOT NULL DEFAULT 0.0')
+
+    def next_year_month():
+        '''yield (year, month) for all the prediction periods'''
+        date_census_became_known, err1 = u.as_date(config['date_census_became_known'])
+        last_date, err1 = u.as_date(config['date_last_transaction'])
+        last_year = last_date.year
+        last_month = last_date.month
+        year = date_census_became_known.year
+        month = date_census_became_known.month
+        while True:
+            yield (year, month)
+            if month == 12:
+                year += 1
+                month = 1
+            else:
+                month += 1
+            if year == last_year and month > last_month:
+                break
+        
+    random.seed(config['random_seed'])
+    all_n_in_training = 0
+    all_n_not_in_training = 0
+    for year_month in next_year_month():
+        year, month = year_month
+        select_stmt = 'SELECT * FROM transactions where sale_year = %d and sale_month = %d' % (
+            year,
+            month,
+            )
+        n_in_training = 0
+        n_not_in_training = 0
+        for row in conn.execute(select_stmt):
+            r = random.random()  # r in [0.0, 1.0)
+            if r < config['fraction_in_training']:
+                conn.execute(
+                    'UPDATE transactions SET in_training = 1.0 WHERE apn = ? AND sale_date = ?',
+                    (row['apn'],
+                     row['sale_date']),
+                )
+                n_in_training += 1
+                all_n_in_training += 1
+            else:
+                conn.execute(
+                    'UPDATE transactions SET in_training = 0.0 WHERE apn = ? AND sale_date = ?',
+                    (row['apn'],
+                     row['sale_date']),
+                )
+                n_not_in_training += 1
+                all_n_not_in_training += 1
+        logger.info(
+            'transactions for %4d %2d: in_training %5d not in training %5d',
+            year,
+            month,
+            n_in_training,
+            n_not_in_training,
+            )
+    logger.info(
+        'transactions for all periods: in_training %d not in training %d',
+        all_n_in_training,
+        all_n_not_in_training,
+        )
     pass
         
     
@@ -992,8 +1079,9 @@ def main(argv):
         read_deeds(conn, config, logger)
         read_taxrolls(conn, config, logger)
         read_census(conn, config, logger)
-    if False:
         create_transactions(conn, config, logger)
+    if True:
+        pass
     if False:
         delete_intermediate_tables(conn)
 
