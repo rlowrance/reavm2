@@ -1,7 +1,7 @@
 {
     "date_census_became_known": "2003-01-01",
     "date_last_transaction": "2009-03-31",
-    "fraction_in_testing": 0.80,
+    "fraction_in_training": 0.80,
     "in_codes_deeds": "real-estate-los-angeles/input/corelogic-code-tables/1080_Code_Tables.csv",
     "in_codes_taxrolls": "real-estate-los-angeles/input/corelogic-code-tables/2580_Code_Tables.csv",
     "in_deeds": [
