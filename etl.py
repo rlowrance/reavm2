@@ -1059,6 +1059,53 @@ def create_transactions(conn, config, logger):
         all_n_not_in_training,
         )
     pass
+
+
+def create_standardize(conn, config, logger):
+    '''determine mean and standard deviation of each numeric column in transactions'''
+    debug = False
+    def summarize(column_name):
+        '''return mean, median, standard deviation'''
+        stmt_select_column = 'SELECT %s FROM transactions' % column_name
+        values = []
+        for row in conn.execute(stmt_select_column):
+            values.append(row[column_name])
+        a = np.array(values)
+        return np.mean(a), np.median(a), np.std(a)
+    
+    conn.execute('DROP TABLE IF EXISTS transactions_standardizers')
+    conn.execute(
+        '''CREATE TABLE transactions_standardizers
+        ( column_name        text NOT NULL
+        , mean               real NOT NULL
+        , median             real NOT NULL
+        , standard_deviation real NOT NULL
+        , PRIMARY KEY (column_name)
+        )
+        '''
+        )
+
+    if debug:
+        stmt_master = "SELECT * FROM sqlite_master"
+        for table_info in conn.execute(stmt_master):
+            print(table_info['tbl_name'], table_info['name'], table_info['type'])
+    stmt_transactions = "pragma table_info('transactions')"
+    for info in conn.execute(stmt_transactions):
+        if debug and False:
+            column_id, column_name, column_type, column_notnull, column_default, column_pk = info
+            print(column_id, column_name, column_type, column_notnull, column_default, column_pk)
+        if info['type'] == 'REAL':  # all features have type REAL
+            mean, median, std = summarize(info['name'])
+            stmt_insert = 'INSERT INTO transactions_standardizers VALUES ("%s", %f, %f, %f)' % (
+                info['name'],
+                mean,
+                median,
+                std,
+                )
+            conn.execute(stmt_insert)
+            if debug:
+                print(info['name'], mean, median, std)
+    pass
         
     
 def main(argv):
@@ -1080,6 +1127,7 @@ def main(argv):
         read_taxrolls(conn, config, logger)
         read_census(conn, config, logger)
         create_transactions(conn, config, logger)
+        create_standardize(conn, config, logger)
     if True:
         pass
     if False:
